@@ -270,6 +270,16 @@ impl WorkgroupCounts {
     }
 }
 
+/// Fine rasterization cursor intersection data.
+#[derive(Clone, Copy, Debug, Default, Zeroable, Pod)]
+#[repr(C)]
+pub struct CursorIntersection {
+    pub deepest_hovered_node: u32,
+    pub pad0: u32,
+    pub pad1: u32,
+    pub pad2: u32,
+}
+
 /// Typed buffer size primitive.
 #[derive(Copy, Clone, Eq, Default, Debug)]
 pub struct BufferSize<T: Sized> {
@@ -346,6 +356,9 @@ pub struct BufferSizes {
     pub indirect_count: BufferSize<IndirectCount>,
     pub bin_headers: BufferSize<BinHeader>,
     pub paths: BufferSize<Path>,
+
+    pub cursor_intersection: BufferSize<CursorIntersection>,
+
     // Bump allocated buffers
     pub lines: BufferSize<LineSoup>,
     pub bin_data: BufferSize<u32>,
@@ -386,6 +399,7 @@ impl BufferSizes {
         let bin_headers = BufferSize::new(binning_wgs * 256);
         let n_paths_aligned = align_up(n_paths, 256);
         let paths = BufferSize::new(n_paths_aligned);
+        let cursor_intersection = BufferSize::new(1);
 
         // The following buffer sizes have been hand picked to accommodate the vello test scenes as
         // well as paris-30k. These should instead get derived from the scene layout using
@@ -415,6 +429,7 @@ impl BufferSizes {
             lines,
             bin_headers,
             paths,
+            cursor_intersection,
             bin_data,
             tiles,
             seg_counts,

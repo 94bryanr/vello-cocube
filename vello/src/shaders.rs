@@ -212,6 +212,8 @@ pub fn full_shaders(
         BindType::BufReadOnly,
         BindType::BufReadOnly,
         BindType::Image(ImageFormat::Rgba8),
+        // Cursor Intersection Buffer
+        BindType::Buffer,
         BindType::ImageRead(ImageFormat::Rgba8),
         BindType::ImageRead(ImageFormat::Rgba8),
         // Mask LUT buffer, used only when MSAA is enabled.

@@ -33,6 +33,9 @@ struct FineResources {
     image_atlas: ResourceProxy,
 
     out_image: ImageProxy,
+
+    /// Buffer for writing the cursor intersection data to.
+    cursor_intersection_buf: ResourceProxy,
 }
 
 #[cfg(feature = "wgpu")]
@@ -401,6 +404,16 @@ impl Render {
         recording.free_resource(bin_header_buf);
         recording.free_resource(path_buf);
         let out_image = ImageProxy::new(params.width, params.height, ImageFormat::Rgba8);
+
+        let cursor_intersection_buf = {
+            let cursor_intersection_buf = BufferProxy::new(
+                buffer_sizes.cursor_intersection.size_in_bytes().into(),
+                "cursor_intersection_buf",
+            );
+            // recording.clear_all(cursor_intersection_buf);
+            ResourceProxy::Buffer(cursor_intersection_buf)
+        };
+
         self.fine_wg_count = Some(wg_counts.fine);
         self.fine_resources = Some(FineResources {
             aa_config: params.antialiasing_method,
@@ -413,6 +426,7 @@ impl Render {
             info_bin_data_buf,
             image_atlas: ResourceProxy::Image(image_atlas),
             out_image,
+            cursor_intersection_buf,
         });
         if robust {
             recording.download(*bump_buf.as_buf().unwrap());
@@ -424,7 +438,8 @@ impl Render {
     /// Run fine rasterization assuming the coarse phase succeeded.
     pub fn record_fine(&mut self, shaders: &FullShaders, recording: &mut Recording) {
         let fine_wg_count = self.fine_wg_count.take().unwrap();
-        let fine = self.fine_resources.take().unwrap();
+        // let fine = self.fine_resources.take().unwrap();
+        let fine = self.fine_resources.as_ref().unwrap();
         match fine.aa_config {
             AaConfig::Area => {
                 recording.dispatch(
@@ -438,6 +453,7 @@ impl Render {
                         fine.ptcl_buf,
                         fine.info_bin_data_buf,
                         ResourceProxy::Image(fine.out_image),
+                        fine.cursor_intersection_buf,
                         fine.gradient_image,
                         fine.image_atlas,
                     ],
@@ -471,6 +487,7 @@ impl Render {
                         fine.ptcl_buf,
                         fine.info_bin_data_buf,
                         ResourceProxy::Image(fine.out_image),
+                        fine.cursor_intersection_buf,
                         fine.gradient_image,
                         fine.image_atlas,
                         self.mask_buf.unwrap(),
@@ -485,6 +502,14 @@ impl Render {
         recording.free_resource(fine.gradient_image);
         recording.free_resource(fine.image_atlas);
         recording.free_resource(fine.info_bin_data_buf);
+
+        // Transfer cursor intersect data from GPU to CPU.
+        {
+            let cursor_intersection_buf_id = *fine.cursor_intersection_buf.as_buf().unwrap();
+            recording.download(cursor_intersection_buf_id);
+            recording.free_resource(fine.cursor_intersection_buf);
+        }
+
         // TODO: make mask buf persistent
         if let Some(mask_buf) = self.mask_buf.take() {
             recording.free_resource(mask_buf);
@@ -505,6 +530,16 @@ impl Render {
             .as_ref()
             .unwrap()
             .bump_buf
+            .as_buf()
+            .unwrap()
+    }
+
+    pub fn cursor_intersection_buf(&self) -> BufferProxy {
+        *self
+            .fine_resources
+            .as_ref()
+            .unwrap()
+            .cursor_intersection_buf
             .as_buf()
             .unwrap()
     }

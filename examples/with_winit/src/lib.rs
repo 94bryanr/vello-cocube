@@ -503,7 +503,7 @@ fn run(
                         // it requires more async wiring for the readback. See
                         // [#gpu > async on wasm](https://xi.zulipchat.com/#narrow/stream/197075-gpu/topic/async.20on.20wasm)
                         if args.async_pipeline && cfg!(not(target_arch = "wasm32")) {
-                            scene_complexity = vello::block_on_wgpu(
+                            (scene_complexity, _) = vello::block_on_wgpu(
                                 &device_handle.device,
                                 renderers[render_state.surface.dev_id]
                                     .as_mut()

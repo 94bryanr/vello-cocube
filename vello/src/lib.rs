@@ -124,7 +124,7 @@ use vello_encoding::Resolver;
 use wgpu_engine::{ExternalResource, WgpuEngine};
 
 /// Temporary export, used in `with_winit` for stats
-pub use vello_encoding::BumpAllocators;
+pub use vello_encoding::{BumpAllocators, CursorIntersection};
 #[cfg(feature = "wgpu")]
 use wgpu::{Device, PipelineCompilationOptions, Queue, SurfaceTexture, TextureFormat, TextureView};
 #[cfg(all(feature = "wgpu", feature = "wgpu-profiler"))]
@@ -294,6 +294,10 @@ pub struct RendererOptions {
     /// Has no effect on WebAssembly
     pub num_init_threads: Option<NonZeroUsize>,
 }
+
+#[derive(Debug)]
+/// The deepest hovered value from rendering pipeline.
+pub struct DeepestHovered(pub u32);
 
 #[cfg(feature = "wgpu")]
 impl Renderer {
@@ -479,7 +483,7 @@ impl Renderer {
         scene: &Scene,
         texture: &TextureView,
         params: &RenderParams,
-    ) -> Result<Option<BumpAllocators>> {
+    ) -> Result<(Option<BumpAllocators>, BufferProxy)> {
         let mut render = Render::new();
         let encoding = scene.encoding();
         // TODO: turn this on; the download feature interacts with CPU dispatch
@@ -503,6 +507,7 @@ impl Renderer {
             &mut self.profiler,
         )?;
 
+        // FIX: Breaking when robust = true. Async read should not happen here.
         let mut bump: Option<BumpAllocators> = None;
         if let Some(bump_buf) = self.engine.get_download(bump_buf) {
             let buf_slice = bump_buf.slice(..);
@@ -528,7 +533,11 @@ impl Renderer {
             #[cfg(feature = "wgpu-profiler")]
             &mut self.profiler,
         )?;
-        Ok(bump)
+
+        // Return the cursor intersection buffer proxy, but do not read here.
+        // An additional queue.submit must be called before the buffer is read.
+        let cursor_intersection_buf = render.cursor_intersection_buf();
+        Ok((bump, cursor_intersection_buf))
     }
 
     /// See [`Self::render_to_surface`]
@@ -539,7 +548,7 @@ impl Renderer {
         scene: &Scene,
         surface: &SurfaceTexture,
         params: &RenderParams,
-    ) -> Result<Option<BumpAllocators>> {
+    ) -> Result<(Option<BumpAllocators>, DeepestHovered)> {
         let width = params.width;
         let height = params.height;
         let mut target = self
@@ -551,7 +560,7 @@ impl Renderer {
         if target.width != width || target.height != height {
             target = TargetTexture::new(device, width, height);
         }
-        let bump = self
+        let (bump, cursor_intersection_buf) = self
             .render_to_texture_async(device, queue, scene, &target.view, params)
             .await?;
         let blit = self
@@ -596,8 +605,10 @@ impl Renderer {
         }
         #[cfg(feature = "wgpu-profiler")]
         self.profiler.resolve_queries(&mut encoder);
+
         queue.submit(Some(encoder.finish()));
         self.target = Some(target);
+
         #[cfg(feature = "wgpu-profiler")]
         {
             self.profiler.end_frame().unwrap();
@@ -608,7 +619,37 @@ impl Renderer {
                 self.profile_result = Some(result);
             }
         }
-        Ok(bump)
+
+        // Compute the deepest hovered id given the data from the fine rasterization stage.
+        // This must happen after queue.submit - otherwise the output texture is deleted and the
+        // pipeline fails during rendering. This is why this code exists here and not in
+        // render_to_texture_async or
+        let deepest_hovered = {
+            let intersect_info = self.engine.get_download(cursor_intersection_buf);
+            let hovered = match intersect_info {
+                Some(cursor_intersection_buf) => {
+                    // NOTE: This is working - and the data is coming off the GPU to the CPU.
+                    //       For some reason though the rendering pipeline crashes AFTER doing
+                    //       this.
+                    let buf_slice = cursor_intersection_buf.slice(..);
+                    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+                    buf_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+                    receiver.receive().await.expect("channel was closed")?;
+                    let mapped = buf_slice.get_mapped_range();
+                    let cursor_intersection: CursorIntersection =
+                        bytemuck::pod_read_unaligned(&mapped);
+                    DeepestHovered(cursor_intersection.deepest_hovered_node)
+                }
+                None => {
+                    // FIX: Incorrect
+                    todo!()
+                }
+            };
+            self.engine.free_download(cursor_intersection_buf);
+            hovered
+        };
+
+        Ok((bump, deepest_hovered))
     }
 }
 

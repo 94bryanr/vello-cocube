@@ -45,11 +45,16 @@ var output: texture_storage_2d<r8unorm, write>;
 var output: texture_storage_2d<rgba8unorm, write>;
 #endif
 
-#ifdef full
+// This output buffer is used to store cursor intersection data which may be sent to the CPU to
+// determine which obj the cursor is currently intersecting.
 @group(0) @binding(5)
+var<storage, read_write> cursor_intersection: u32;
+
+#ifdef full
+@group(0) @binding(6)
 var gradients: texture_2d<f32>;
 
-@group(0) @binding(6)
+@group(0) @binding(7)
 var image_atlas: texture_2d<f32>;
 #endif
 
@@ -57,9 +62,9 @@ var image_atlas: texture_2d<f32>;
 #ifdef msaa
 
 #ifdef full
-const MASK_LUT_INDEX: u32 = 7;
+const MASK_LUT_INDEX: u32 = 8;
 #else
-const MASK_LUT_INDEX: u32 = 5;
+const MASK_LUT_INDEX: u32 = 6;
 #endif
 
 #ifdef msaa8
@@ -1095,10 +1100,26 @@ fn main(
             // Max with a small epsilon to avoid NaNs
             let a_inv = 1.0 / max(fg.a, 1e-6);
             let rgba_sep = vec4(fg.rgb * a_inv, fg.a);
-            textureStore(output, vec2<i32>(coords), rgba_sep);
+
+            // TODO: This is a cursor display for debugging.
+            //       Need to pass the cursor into this pipeline.
+            let test_cursor_pos: vec2<f32> = vec2(10.0, 10.0);
+            let pixel_coord: vec2<f32> = vec2(f32(coords.x), f32(coords.y));
+            let hover_radius: f32 = 4.0;
+            if distance(pixel_coord, test_cursor_pos) < hover_radius {
+                // TODO: Need to store relevant cursor intersect metadata.
+                cursor_intersection = 123u;
+
+                // per_instance_frame_output[in.instance_idx].is_hovered = 1u;
+                // return vec4(vec3(1.0, 0.0, 0.0), paint_pct);
+                textureStore(output, vec2<i32>(coords), vec4(1.0, 1.0, 1.0, 1.0));
+            } else {
+                textureStore(output, vec2<i32>(coords), rgba_sep);
+            }
         }
-    } 
+    }
 }
+
 
 fn premul_alpha(rgba: vec4<f32>) -> vec4<f32> {
     return vec4(rgba.rgb * rgba.a, rgba.a);
