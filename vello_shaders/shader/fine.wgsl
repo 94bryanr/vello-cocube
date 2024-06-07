@@ -914,6 +914,11 @@ fn main(
     var cmd_ix = tile_ix * PTCL_INITIAL_ALLOC;
     let blend_offset = ptcl[cmd_ix];
     cmd_ix += 1u;
+
+    // Track the index of the topmost command which draws (non-alpha) data to this pixel.
+    // This is used to determine which command is generating the pixel which the cursor is hovering over.
+    var topmost_drawing_cmd_idx = 0u;
+
     // main interpretation loop
     while true {
         let tag = ptcl[cmd_ix];
@@ -942,6 +947,12 @@ fn main(
                 for (var i = 0u; i < PIXELS_PER_THREAD; i += 1u) {
                     let fg_i = fg * area[i];
                     rgba[i] = rgba[i] * (1.0 - fg_i.a) + fg_i;
+
+                    // FIX: Don't I want hovers and clicks to work on transparent objects though?
+                    // Update top draw cmd index if drawing non-opaque color.
+                    if fg_i.a > 0.0 {
+                        topmost_drawing_cmd_idx = max(cmd_ix, topmost_drawing_cmd_idx);
+                    }
                 }
                 cmd_ix += 2u;
             }
@@ -1103,16 +1114,16 @@ fn main(
 
             // TODO: This is a cursor display for debugging.
             //       Need to pass the cursor into this pipeline.
-            let test_cursor_pos: vec2<f32> = vec2(10.0, 10.0);
+            let test_cursor_pos: vec2<f32> = vec2(370.0, 490.0);
             let pixel_coord: vec2<f32> = vec2(f32(coords.x), f32(coords.y));
-            let hover_radius: f32 = 4.0;
+            let hover_radius: f32 = 64.0;
             if distance(pixel_coord, test_cursor_pos) < hover_radius {
                 // TODO: Need to store relevant cursor intersect metadata.
+                // FIX: Should be an atomic?
+                //cursor_intersection = max(topmost_drawing_cmd_idx, cursor_intersection);
                 cursor_intersection = 123u;
-
-                // per_instance_frame_output[in.instance_idx].is_hovered = 1u;
-                // return vec4(vec3(1.0, 0.0, 0.0), paint_pct);
-                textureStore(output, vec2<i32>(coords), vec4(1.0, 1.0, 1.0, 1.0));
+                let debug_color = saturate(f32(topmost_drawing_cmd_idx) / 100000.0);
+                textureStore(output, vec2<i32>(coords), vec4(0.0, 0.0, debug_color, 1.0));
             } else {
                 textureStore(output, vec2<i32>(coords), rgba_sep);
             }
